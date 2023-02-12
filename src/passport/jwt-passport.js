@@ -1,5 +1,5 @@
 const { Strategy, ExtractJwt } = require("passport-jwt");
-const { verifyJwt } = require("../services/jwt-service");
+const { verifyJwtCallback } = require("../services/jwt-service");
 const fs = require("fs");
 const path = require("path");
 
@@ -16,4 +16,4 @@ options.algorithms = ["RS256"];
 
 // exporting the prepared strategy to use with passport in main file
 // so that we can use this passport strategy at anywhere
-exports.jwtStrategy = new Strategy(options, verifyJwt);
+exports.jwtStrategy = new Strategy(options, verifyJwtCallback);

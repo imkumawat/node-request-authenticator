@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const fs = require("fs");
 const path = require("path");
+const moment = require("moment");
 
 const { jwtTokens } = require("../models");
 const redis = require("../utils/redis-client");
@@ -11,27 +12,49 @@ const {
 } = require("../utils/secure-token");
 
 const jwtConfig = {
-  accessTokenExpiresIn: 120,
-  refreshTokenExpiresIn: 300,
+  roles: ["user", "admin"],
+  validTokenTypes: [
+    "accessToken",
+    "refreshToken",
+    "emailVerification",
+    "passwordReset",
+  ],
+  ExpiresIn: {
+    accessToken: 300,
+    refreshToken: 900,
+    emailVerification: 86400, // 24 hrs
+    passwordReset: 900, // 15 minutes
+  },
 };
 
 /**
  *
  * @param {object} payload User object that contains sensitive data used to identify of a user
  * @param {string} type  Type of jwt token to be generated, default is access token
- * @param {boolean} rememberMe To extend validity of access token up to 30 days, default false and 24 hrs
- * @returns {string} Jwt Token
+ * @param {boolean} rememberMe To extend validity of access token
+ * @param {string} role Authorization type of token
+ * @returns {Promise}
  */
 const generateJwt = async (
   payload,
   type = "accessToken",
-  rememberMe = false
+  rememberMe = false,
+  role = "user"
 ) => {
-  // adding informational data
+  // checking params input
+  if (
+    !jwtConfig.validTokenTypes.includes(type) ||
+    !jwtConfig.roles.includes(role)
+  ) {
+    throw new Error("Invalid type of token or role");
+  }
+
+  // adding token preference
   payload.type = type;
   payload.rememberMe = rememberMe;
+  payload.role = role;
 
-  // decrypting the payload to prevent viewing data inside of it.
+  // ecrypting the payload to prevent viewing data inside of it.
   const securedToken = generateSecureToken(payload);
 
   // creating the jwt using decrpted payload
@@ -44,12 +67,22 @@ const generateJwt = async (
     {
       expiresIn:
         type === "refreshToken" || rememberMe
-          ? `${jwtConfig.refreshTokenExpiresIn}s`
-          : `${jwtConfig.accessTokenExpiresIn}s`,
+          ? `${jwtConfig.ExpiresIn["refreshToken"]}s`
+          : `${jwtConfig.ExpiresIn[type]}s`,
       algorithm: "RS256",
     }
   );
 
+  if (type === "emailVerification" || "passwordReset") {
+    // Using user's unique identification, by this if user requests multiple email verification
+    // or password reset email, then only most recent will work, and all previous emails will
+    // not work, this is a good security practice
+    await redis.setEx(
+      `${type}_${payload.sub}`,
+      jwtConfig.ExpiresIn[type],
+      securedToken
+    );
+  }
   if (type === "accessToken") {
     // Single Device Login //
     /*
@@ -58,19 +91,44 @@ const generateJwt = async (
       jwtConfig.accessTokenExpiresIn,
       securedToken
     );
+    
     */
     // Single Device Login //
 
     // Multiple Device Login //
-    await redis.pushIntoList(payload.sub.toString(), securedToken);
-    await redis.setExpirationOnKey(
-      payload.sub.toString(),
-      jwtConfig.accessTokenExpiresIn
-    );
+    await Promise.all([
+      // Needed to check when token last time accessed
+      redis.set(securedToken, moment().unix()),
+      redis.pushIntoList(payload.sub.toString(), securedToken),
+      redis.setExpirationOnKey(
+        payload.sub.toString(),
+        jwtConfig.ExpiresIn[type]
+      ),
+    ]);
   }
   // Multiple Device Login //
 
-  return jwtToken;
+  return { jwtToken, securedToken };
+};
+
+/**
+ *
+ * @param {string} jwtToken
+ * @returns {Promise}
+ */
+const verifyJwt = async (jwtToken) => {
+  const verifiedJwt = jwt.verify(
+    jwtToken,
+    fs.readFileSync(
+      path.join(__dirname, "..", "/keys/jwt-public-key.pem"),
+      "utf8"
+    )
+  );
+
+  const securedToken = verifiedJwt.payload.identifier;
+  const data = verifySecureToken(securedToken);
+
+  return { identifier: payload.identifier, data: data };
 };
 
 /**
@@ -79,7 +137,7 @@ const generateJwt = async (
  * @param {function} callback Returns callback
  * @returns {function} Returns callback
  */
-const verifyJwt = async (payload, callback) => {
+const verifyJwtCallback = async (payload, callback) => {
   // here we recieved payload after verifying jwt,
   // decrypting the data, as we encrypted when genearating jwt token
   let data = verifySecureToken(payload.identifier);
@@ -87,6 +145,7 @@ const verifyJwt = async (payload, callback) => {
   // We only allow access tokens to authenticate
   if (data.type !== "accessToken") {
     console.log("You are not authorized...invalid token type");
+    // we can add rate limiter if needed
     return callback(null, false);
   }
 
@@ -104,8 +163,18 @@ const verifyJwt = async (payload, callback) => {
   const activeLogins = await redis.getList(data.sub);
   if (!activeLogins.includes(payload.identifier)) {
     console.log("You are not authorized...token not found in redis");
+    // we can add rate limiter if needed
     return callback(null, false);
   }
+
+  // check user login compulsion to force user re-authenticate from certain time of login
+  // if data.iat > 3 months then call expireJwt and ask use to re-login
+
+  // Updating token accessed time
+  // you should create a redis service that delete these keys when they elapsed 30 days..
+  // the identifier will only valid at max 30 days.
+  // so get this key value and check if it crossed 30 days then delete it
+  await redis.set(payload.identifier, moment().unix());
   // Multiple Device Login //
 
   // Optional for more security, strict to original remote host machine only for which jwt is generated:
@@ -147,6 +216,7 @@ const expireJwt = async (sub, identifier = false, accessToken = false) => {
     // Single Device Login //
 
     // Multiple Device Login //
+    redis.deleteKey(identifier),
     redis.removeFromList(sub, identifier),
     jwtTokens.deleteOne({
       accessToken: accessToken,
@@ -161,61 +231,73 @@ const expireJwt = async (sub, identifier = false, accessToken = false) => {
  *
  * @param {string} accessToken Expired/Active jwt access token that belongs to same refresh token
  * @param {string} refreshToken Valid jwt refresh token
- * @returns {object} new jwt access and refresh token
+ * @returns {Promise} new jwt access and refresh token
  */
 
 const regenerateJwt = async (accessToken, refreshToken) => {
-  try {
-    const verifiedRefreshTokenPayload = jwt.verify(
-      refreshToken,
-      fs.readFileSync(
-        path.join(__dirname, "..", "/keys/jwt-public-key.pem"),
-        "utf8"
-      )
-    );
+  jwt.verify(
+    refreshToken,
+    fs.readFileSync(
+      path.join(__dirname, "..", "/keys/jwt-public-key.pem"),
+      "utf8"
+    )
+  );
 
-    const token = await jwtTokens.findOne({
-      accessToken: accessToken,
-    });
+  const token = await jwtTokens.findOne({
+    accessToken: accessToken,
+  });
 
-    if (!token || token.refreshToken !== refreshToken) {
-      // use your own error creater and handler
-      throw new Error("Invalid access token or refresh token");
-    }
+  if (!token || token.refreshToken !== refreshToken) {
+    // use your own error creater and handler
+    throw new Error("Invalid access token or refresh token");
+  }
 
-    // Single Device Login //
-    /*
+  // Single Device Login //
+  /*
     await expireJwt(token.sub.toString());
     */
-    // Single Device Login //
+  // Single Device Login //
 
-    // Multiple Device Login //
-    const accessTokenPayload = jwt.decode(accessToken, {
-      complete: true,
-    });
-    await expireJwt(
-      token.sub.toString(),
-      accessTokenPayload.payload.identifier,
-      accessToken
-    );
-    // Multiple Device Login //
+  // Multiple Device Login //
+  const accessTokenPayload = jwt.decode(accessToken, {
+    complete: true,
+  });
+  await expireJwt(
+    token.sub.toString(),
+    accessTokenPayload.payload.identifier,
+    accessToken
+  );
+  // Multiple Device Login //
 
-    // Dcrypting the identifier
-    const data = verifySecureToken(verifiedRefreshTokenPayload.identifier);
-    const tokenPreference = data.rememberMe;
-    // Forming the original payload
-    delete data.type;
-    delete data.rememberMe;
+  // Dcrypting the identifier
+  const payload = verifySecureToken(accessTokenPayload.payload.identifier);
 
-    // Now generating new access token and refresh token using the original data/payload
-    const jwts = await Promise.all([
-      generateJwt(data, "accessToken", tokenPreference),
-      generateJwt(data, "refreshToken"),
-    ]);
-    return { accessToken: jwts[0], refreshToken: jwts[1], sub: token.sub };
-  } catch (err) {
-    throw new Error(err.message);
-  }
+  // getting token preferences
+  const accessTokenPreference = payload.rememberMe;
+  const role = payload.role;
+
+  // Now generating new access token and refresh token using the original data/payload
+  const jwts = await Promise.all([
+    generateJwt(payload, "accessToken", accessTokenPreference, role),
+    generateJwt(payload, "refreshToken", false, role),
+  ]);
+
+  const accesstoken = jwts[0].jwtToken;
+  const refreshtoken = jwts[1].jwtToken;
+  await jwtTokens.create({
+    sub: result._id,
+    identifier: jwts[0].securedToken,
+    accessToken: accesstoken,
+    refreshToken: refreshtoken,
+  });
+
+  return { accessToken, refreshToken };
 };
 
-module.exports = { generateJwt, verifyJwt, expireJwt, regenerateJwt };
+module.exports = {
+  generateJwt,
+  verifyJwt,
+  verifyJwtCallback,
+  expireJwt,
+  regenerateJwt,
+};

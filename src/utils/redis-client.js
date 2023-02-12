@@ -2,6 +2,10 @@ const { createClient } = require("redis");
 
 let redis = "";
 
+/**
+ *
+ * @returns {Promise}
+ */
 const redisClient = async () => {
   try {
     redis = createClient({
@@ -22,10 +26,10 @@ const redisClient = async () => {
  *
  * @param {string} key
  * @param {number} expr
- * @param {string} value
- * @returns {string} status
+ * @param {string | number} value
+ * @returns {Promise}
  */
-const setEx = async (key, expr, value) => {
+const setEx = (key, expr, value) => {
   try {
     return redis.setEx(key, expr, value);
   } catch (error) {
@@ -36,9 +40,23 @@ const setEx = async (key, expr, value) => {
 /**
  *
  * @param {string} key
- * @returns {string} value
+ * @param {string | number} value
+ * @returns {Promise}
  */
-const getKey = async (key) => {
+const set = (key, value) => {
+  try {
+    return redis.set(key, value);
+  } catch (error) {
+    throw new Error(error.message);
+  }
+};
+
+/**
+ *
+ * @param {string} key
+ * @returns {Promise}
+ */
+const getKey = (key) => {
   try {
     return redis.get(key);
   } catch (error) {
@@ -49,9 +67,9 @@ const getKey = async (key) => {
 /**
  *
  * @param {string} key
- * @returns {string} status
+ * @returns {Promise}
  */
-const deleteKey = async (key) => {
+const deleteKey = (key) => {
   try {
     return redis.DEL(key);
   } catch (error) {
@@ -59,7 +77,13 @@ const deleteKey = async (key) => {
   }
 };
 
-const pushIntoList = async (listName, value) => {
+/**
+ *
+ * @param {string} listName
+ * @param {string | number} value
+ * @returns {Promise}
+ */
+const pushIntoList = (listName, value) => {
   try {
     return redis.LPUSH(listName, value);
   } catch (error) {
@@ -67,7 +91,14 @@ const pushIntoList = async (listName, value) => {
   }
 };
 
-const removeFromList = async (listName, value, occurance = 1) => {
+/**
+ *
+ * @param {string} listName
+ * @param {string | number} value
+ * @param {number} occurance
+ * @returns {Promise}
+ */
+const removeFromList = (listName, value, occurance = 1) => {
   try {
     return redis.LREM(listName, occurance, value);
   } catch (error) {
@@ -75,7 +106,14 @@ const removeFromList = async (listName, value, occurance = 1) => {
   }
 };
 
-const getList = async (listName, startFrom = 0, endAt = -1) => {
+/**
+ *
+ * @param {string} listName
+ * @param {number} startFrom
+ * @param {number} endAt
+ * @returns {Promise}
+ */
+const getList = (listName, startFrom = 0, endAt = -1) => {
   try {
     return redis.LRANGE(listName, startFrom, endAt);
   } catch (error) {
@@ -83,7 +121,13 @@ const getList = async (listName, startFrom = 0, endAt = -1) => {
   }
 };
 
-const setExpirationOnKey = async (listName, expirationTimeInSeconds) => {
+/**
+ *
+ * @param {string} listName
+ * @param {number} expirationTimeInSeconds
+ * @returns {Promise}
+ */
+const setExpirationOnKey = (listName, expirationTimeInSeconds) => {
   try {
     return redis.expire(listName, expirationTimeInSeconds);
   } catch (error) {
@@ -94,6 +138,7 @@ const setExpirationOnKey = async (listName, expirationTimeInSeconds) => {
 module.exports = {
   redisClient,
   setEx,
+  set,
   getKey,
   deleteKey,
   pushIntoList,

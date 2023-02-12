@@ -7,6 +7,12 @@ const jwtSchema = new mongoose.Schema(
       ref: "Users",
       required: [true, "User Id is required"],
     },
+    identifier: {
+      type: String,
+      unique: true,
+      required: [true, "Identifier of access token is required"],
+      trim: true,
+    },
 
     accessToken: {
       type: String,
@@ -27,6 +33,6 @@ const jwtSchema = new mongoose.Schema(
   }
 );
 
-jwtSchema.index({ sub: 1, accessToken: 1 });
+jwtSchema.index({ sub: 1, identifier: 1, accessToken: 1 });
 
 module.exports = jwtSchema;
