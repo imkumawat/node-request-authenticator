@@ -1,0 +1,38 @@
+{
+  "name": "request-authenticator",
+  "version": "1.0.0",
+  "description": "authenticating api request in nodejs using jwt and crypto",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/imkumawat/node-request-authenticator.git"
+  },
+  "keywords": [
+    "api-validator",
+    "user-authentication"
+  ],
+  "author": "Manoj Kumawat",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/imkumawat/node-request-authenticator/issues"
+  },
+  "homepage": "https://github.com/imkumawat/node-request-authenticator#readme",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.1",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "geoip-lite": "^1.4.7",
+    "jsonwebtoken": "^9.0.0",
+    "moment": "^2.29.4",
+    "mongoose": "^6.9.1",
+    "passport": "^0.6.0",
+    "passport-jwt": "^4.0.1",
+    "redis": "^4.6.4",
+    "request-ip": "^3.3.0",
+    "validator": "^13.9.0"
+  }
+}
